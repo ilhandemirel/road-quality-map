@@ -1,0 +1,74 @@
+/* ── Google Fonts ────────────────────────────────────────────────────────────── */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap");
+
+/* ── CSS Reset & Globals ────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* ── White-Blue Backgrounds ── */
+  --bg-primary: #F0F4F8;
+  --bg-secondary: #FFFFFF;
+  --bg-tertiary: #F7F9FC;
+  --bg-card: #EFF4FB;
+  --bg-card-hover: #E4EDFA;
+  --bg-input: #EDF2F9;
+  --bg-input-focus: #E1EBFA;
+
+  /* ── Borders ── */
+  --border-subtle: rgba(59, 130, 246, 0.1);
+  --border-glass: rgba(59, 130, 246, 0.18);
+
+  /* ── Text ── */
+  --text-primary: #1E293B;
+  --text-secondary: #475569;
+  --text-muted: #94A3B8;
+
+  /* ── Accent ── */
+  --accent: #3B82F6;
+  --accent-hover: #2563EB;
+  --accent-soft: rgba(59, 130, 246, 0.1);
+  --accent-glow: rgba(59, 130, 246, 0.15);
+  --gradient-accent: linear-gradient(135deg, #3B82F6, #60A5FA);
+  --gradient-accent-h: linear-gradient(90deg, #3B82F6, #60A5FA);
+
+  /* ── Status ── */
+  --success: #22C55E;
+  --success-soft: rgba(34, 197, 94, 0.08);
+  --warning: #F59E0B;
+  --warning-soft: rgba(245, 158, 11, 0.08);
+  --danger: #EF4444;
+  --danger-soft: rgba(239, 68, 68, 0.08);
+
+  /* ── Radii ── */
+  --radius-xs: 8px;
+  --radius-sm: 12px;
+  --radius-md: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 28px;
+
+  /* ── Shadows ── */
+  --shadow: 0 8px 40px rgba(30, 41, 59, 0.08);
+  --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.08);
+  --shadow-card: 0 2px 8px rgba(30, 41, 59, 0.04);
+  --transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+  --transition-fast: all 0.15s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
