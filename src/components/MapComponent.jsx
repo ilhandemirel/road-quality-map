@@ -354,6 +354,22 @@ export default function MapComponent() {
   const [dataLoading, setDataLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // Otomatik olarak kullanıcının konumunu al
+  useEffect(() => {
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          setUserLocation(loc);
+        },
+        (err) => {
+          console.error("Otomatik konum alınamadı:", err);
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+      );
+    }
+  }, []);
+
   const handleRouteReady = useCallback(
     (path) => {
       setRoutePath(path);
