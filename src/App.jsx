@@ -7,7 +7,7 @@ import "./App.css";
  * Required APIs: Maps JavaScript API, Places API, Directions API.
  * Required Libraries are loaded dynamically via useMapsLibrary.
  */
-const GOOGLE_MAPS_API_KEY = "AIzaSyDJEuUvi3NUqogQ-a3f9hunCk6DSG_9uu0";
+const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
 function App() {
   return (
