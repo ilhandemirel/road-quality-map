@@ -1,0 +1,76 @@
+/* ── Google Fonts ────────────────────────────────────────────────────────────── */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap");
+
+/* ── CSS Reset & Globals ────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  /* ── Apple System Backgrounds ── */
+  --bg-primary: #000000;
+  --bg-secondary: #1C1C1E;
+  --bg-tertiary: #2C2C2E;
+  --bg-glass: rgba(44, 44, 46, 0.72);
+  --bg-glass-elevated: rgba(58, 58, 60, 0.55);
+  --bg-card: rgba(255, 255, 255, 0.05);
+  --bg-card-hover: rgba(255, 255, 255, 0.08);
+  --bg-input: rgba(118, 118, 128, 0.12);
+  --bg-input-focus: rgba(118, 118, 128, 0.18);
+
+  /* ── Apple Separators ── */
+  --border-subtle: rgba(84, 84, 88, 0.36);
+  --border-glass: rgba(10, 132, 255, 0.15);
+  --border-glow: rgba(10, 132, 255, 0.3);
+
+  /* ── Apple Text ── */
+  --text-primary: #FFFFFF;
+  --text-secondary: rgba(235, 235, 245, 0.6);
+  --text-muted: rgba(235, 235, 245, 0.3);
+
+  /* ── Apple Accent & Status ── */
+  --accent: #0A84FF;
+  --accent-hover: #409CFF;
+  --accent-soft: rgba(10, 132, 255, 0.12);
+  --accent-glow: rgba(10, 132, 255, 0.2);
+  --gradient-accent: linear-gradient(135deg, #0A84FF, #5AC8FA);
+  --gradient-accent-h: linear-gradient(90deg, #0A84FF, #5AC8FA);
+  --success: #30D158;
+  --success-soft: rgba(48, 209, 88, 0.1);
+  --warning: #FFD60A;
+  --warning-soft: rgba(255, 214, 10, 0.1);
+  --danger: #FF453A;
+  --danger-soft: rgba(255, 69, 58, 0.1);
+
+  /* ── Apple Radii ── */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+
+  /* ── Apple Shadows & Effects ── */
+  --shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 16px rgba(10, 132, 255, 0.1);
+  --shadow-card: 0 1px 4px rgba(0, 0, 0, 0.3);
+  --backdrop-blur: blur(20px);
+  --transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+  --transition-fast: all 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
