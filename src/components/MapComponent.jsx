@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { Map, useMap, useMapsLibrary } from "@vis.gl/react-google-maps";
-import { generateRoadData } from "../data/mockData";
+import { loadRealRoadData } from "../data/realData";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-const KAHRAMANMARAS_CENTER = { lat: 37.5753, lng: 36.9228 };
+const KAHRAMANMARAS_CENTER = { lat: 37.588, lng: 36.82 };
 const DEFAULT_ZOOM = 14;
 
 /**
@@ -26,6 +26,24 @@ const getScoreLabel = (score) => {
   return "Kötü";
 };
 
+const getEventIcon = (eventType) => {
+  switch (eventType) {
+    case "çukur": return "🕳️";
+    case "kasis": return "⛔";
+    case "bozuk": return "🚧";
+    default: return "✅";
+  }
+};
+
+const getEventLabel = (eventType) => {
+  switch (eventType) {
+    case "çukur": return "Çukur";
+    case "kasis": return "Kasis";
+    case "bozuk": return "Bozuk Yol";
+    default: return "Düz Yol";
+  }
+};
+
 // ─── Heatmap Sub-component ─────────────────────────────────────────────────────
 function HeatmapLayer({ roadData }) {
   const map = useMap();
@@ -35,11 +53,14 @@ function HeatmapLayer({ roadData }) {
   useEffect(() => {
     if (!map || !visualization || !roadData || roadData.length === 0) return;
 
-    // Build weighted LatLng data from road data points
-    const heatmapData = roadData.map((point) => ({
-      location: new google.maps.LatLng(point.lat, point.lng),
-      weight: point.vibration_score,
-    }));
+    // Sadece skoru 5 ve üzeri (orta ve kötü düzey) olan sert olayları haritaya ekle.
+    // Böylece düz yollardaki silik yeşillikler tamamen kaybolur.
+    const heatmapData = roadData
+      .filter((point) => point.vibration_score >= 5)
+      .map((point) => ({
+        location: new google.maps.LatLng(point.lat, point.lng),
+        weight: point.vibration_score,
+      }));
 
     // Create or update the HeatmapLayer
     if (!heatmapRef.current) {
@@ -47,13 +68,13 @@ function HeatmapLayer({ roadData }) {
         data: heatmapData,
         map,
         radius: 30,
-        opacity: 0.7,
+        opacity: 0.8,
         gradient: [
-          "rgba(0, 255, 0, 0)",
-          "rgba(0, 255, 0, 1)",
-          "rgba(255, 255, 0, 1)",
-          "rgba(255, 165, 0, 1)",
-          "rgba(255, 0, 0, 1)",
+          "rgba(255, 255, 0, 0)",  // Görünmez başlangıç
+          "rgba(255, 255, 0, 1)",  // Sarı (Orta)
+          "rgba(255, 165, 0, 1)",  // Turuncu (Kötü)
+          "rgba(255, 0, 0, 1)",    // Kırmızı (Çok Kötü)
+          "rgba(139, 0, 0, 1)",    // Koyu Kırmızı (Tehlikeli)
         ],
       });
     } else {
@@ -229,11 +250,13 @@ function RouteWarningMarkers({ routePath, roadData }) {
         });
 
         const infoWindow = new google.maps.InfoWindow({
-          content: `<div style="font-family:Inter,sans-serif;padding:4px 8px;">
-            <strong style="color:${getScoreColor(point.vibration_score)}">
-              ⚠ ${getScoreLabel(point.vibration_score)} Yol
+          content: `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+            <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">
+              ${getEventIcon(point.eventType)} ${getEventLabel(point.eventType)}
             </strong><br/>
-            <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span>
+            <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span><br/>
+            <span style="color:#666;">Hız: <b>${point.speed} m/s</b></span><br/>
+            <span style="color:#666;">Salınım: <b>${point.peakToPeak}g</b></span>
           </div>`,
         });
         marker.addListener("click", () => infoWindow.open(map, marker));
@@ -321,22 +344,20 @@ function MapViewController({ center }) {
   return null;
 }
 
-// ─── Road Data Loader (fetches real road polylines from Directions API) ────────
+// ─── Road Data Loader (parses real CSV sensor data) ───────────────────────────
 function RoadDataLoader({ onDataReady }) {
   const map = useMap();
-  const routes = useMapsLibrary("routes");
   const loadedRef = useRef(false);
 
   useEffect(() => {
-    if (!map || !routes || loadedRef.current) return;
+    if (!map || loadedRef.current) return;
     loadedRef.current = true;
 
-    console.log("🛣️ Yol verileri Directions API'den yükleniyor...");
-    generateRoadData().then((data) => {
-      console.log(`✅ ${data.length} yol veri noktası yüklendi`);
-      onDataReady(data);
-    });
-  }, [map, routes, onDataReady]);
+    console.log("🛣️ Gerçek sensör verileri yükleniyor...");
+    const data = loadRealRoadData();
+    console.log(`✅ ${data.length} yol veri noktası yüklendi (gerçek veri)`);
+    onDataReady(data);
+  }, [map, onDataReady]);
 
   return null;
 }
@@ -586,16 +607,16 @@ export default function MapComponent() {
               </div>
               <div className="legend-items">
                 <div className="legend-item">
-                  <span className="legend-dot" style={{ background: "#22c55e" }}></span>
-                  İyi (1-3)
+                  <span className="legend-dot" style={{ background: "#eab308" }}></span>
+                  Sert (5-6)
                 </div>
                 <div className="legend-item">
-                  <span className="legend-dot" style={{ background: "#eab308" }}></span>
-                  Orta (4-7)
+                  <span className="legend-dot" style={{ background: "#f97316" }}></span>
+                  Kötü (7)
                 </div>
                 <div className="legend-item">
                   <span className="legend-dot" style={{ background: "#ef4444" }}></span>
-                  Kötü (8-10)
+                  Tehlikeli (8-10)
                 </div>
               </div>
             </div>
@@ -614,14 +635,20 @@ export default function MapComponent() {
               </div>
               <div className="stats-grid">
                 <div className="stat-card">
-                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.length}</span>
-                  <span className="stat-label">Toplam Nokta</span>
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter(d => d.vibration_score >= 5).length}</span>
+                  <span className="stat-label">Sert Olay</span>
                 </div>
                 <div className="stat-card">
-                  <span className="stat-value">
-                    {dataLoading ? <span className="skeleton" /> : roadData.filter((d) => d.vibration_score >= 8).length}
-                  </span>
-                  <span className="stat-label">Kötü Yol</span>
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter((d) => d.vibration_score >= 5 && d.eventType === "çukur").length}</span>
+                  <span className="stat-label">🕳️ Çukur</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter((d) => d.vibration_score >= 5 && d.eventType === "kasis").length}</span>
+                  <span className="stat-label">⛔ Kasis</span>
+                </div>
+                <div className="stat-card">
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter((d) => d.vibration_score >= 5 && d.eventType === "bozuk").length}</span>
+                  <span className="stat-label">🚧 Bozuk</span>
                 </div>
                 <div className="stat-card">
                   <span className="stat-value">
