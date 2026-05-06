@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { Map, useMap, useMapsLibrary } from "@vis.gl/react-google-maps";
 import { loadRealRoadData } from "../data/realData";
+import { useAdmin } from "../context/AdminContext";
+import { getRemovedPotholes, addRemovedPothole, getAddedSpeedBumps, addSpeedBump, removeSpeedBump, getAddedPotholes, addPothole, removeAddedPothole } from "../utils/adminStorage";
+import ReportPanel from "./ReportPanel";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 const KAHRAMANMARAS_CENTER = { lat: 37.588, lng: 36.82 };
@@ -30,7 +33,6 @@ const getEventIcon = (eventType) => {
   switch (eventType) {
     case "çukur": return "🕳️";
     case "kasis": return "⛔";
-    case "bozuk": return "🚧";
     default: return "✅";
   }
 };
@@ -39,62 +41,122 @@ const getEventLabel = (eventType) => {
   switch (eventType) {
     case "çukur": return "Çukur";
     case "kasis": return "Kasis";
-    case "bozuk": return "Bozuk Yol";
     default: return "Düz Yol";
   }
 };
 
-// ─── Heatmap Sub-component ─────────────────────────────────────────────────────
-function HeatmapLayer({ roadData }) {
+const BUMP_ICON = {
+  path: "M -12,0 C -12,-12 12,-12 12,0 Z",
+  scale: 1.2,
+  fillColor: "#f59e0b",
+  fillOpacity: 1,
+  strokeColor: "#000000",
+  strokeWeight: 2,
+};
+
+const POTHOLE_ICON = {
+  path: "M -11,-9 L 11,-9 L 0,10 Z",
+  scale: 1.2,
+  fillColor: "#7c3aed",
+  fillOpacity: 1,
+  strokeColor: "#000000",
+  strokeWeight: 2,
+};
+
+// ─── Defect Markers Sub-component ──────────────────────────────────────────────
+function DefectMarkers({ roadData, isAdmin }) {
   const map = useMap();
-  const visualization = useMapsLibrary("visualization");
-  const heatmapRef = useRef(null);
+  const markersRef = useRef([]);
 
   useEffect(() => {
-    if (!map || !visualization || !roadData || roadData.length === 0) return;
+    // Önceki marker'ları temizle
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
 
-    // Sadece skoru 5 ve üzeri (orta ve kötü düzey) olan sert olayları haritaya ekle.
-    // Böylece düz yollardaki silik yeşillikler tamamen kaybolur.
-    const heatmapData = roadData
-      .filter((point) => point.vibration_score >= 5)
-      .map((point) => ({
-        location: new google.maps.LatLng(point.lat, point.lng),
-        weight: point.vibration_score,
-      }));
+    if (!map || !roadData || roadData.length === 0) return;
 
-    // Create or update the HeatmapLayer
-    if (!heatmapRef.current) {
-      heatmapRef.current = new google.maps.visualization.HeatmapLayer({
-        data: heatmapData,
+    // Tüm tespit edilen olayları göster (yeni algoritma sadece anomalileri döndürüyor)
+    const badPoints = roadData.filter((p) => p.vibration_score >= 4);
+
+    badPoints.forEach((point) => {
+      const position = new google.maps.LatLng(point.lat, point.lng);
+      const title = `${getScoreLabel(point.vibration_score)} Yol — Skor: ${point.vibration_score}/10`;
+
+      let iconConfig;
+      let labelConfig = null;
+
+      if (point.eventType === "kasis") {
+        iconConfig = BUMP_ICON;
+      } else if (point.eventType === "çukur") {
+        iconConfig = POTHOLE_ICON;
+      } else {
+        iconConfig = {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: point.vibration_score >= 8 ? 16 : 12,
+          fillColor: getScoreColor(point.vibration_score),
+          fillOpacity: 0.9,
+          strokeColor: "#ffffff",
+          strokeWeight: 2,
+        };
+        labelConfig = {
+          text: `${point.vibration_score}`,
+          color: "#ffffff",
+          fontWeight: "bold",
+          fontSize: point.vibration_score >= 8 ? "12px" : "10px",
+        };
+      }
+
+      const marker = new google.maps.Marker({
         map,
-        radius: 30,
-        opacity: 0.8,
-        gradient: [
-          "rgba(255, 255, 0, 0)",  // Görünmez başlangıç
-          "rgba(255, 255, 0, 1)",  // Sarı (Orta)
-          "rgba(255, 165, 0, 1)",  // Turuncu (Kötü)
-          "rgba(255, 0, 0, 1)",    // Kırmızı (Çok Kötü)
-          "rgba(139, 0, 0, 1)",    // Koyu Kırmızı (Tehlikeli)
-        ],
+        position,
+        title,
+        icon: iconConfig,
+        label: labelConfig,
+        zIndex: point.eventType === "kasis" || point.eventType === "çukur" ? 100 : 10,
       });
-    } else {
-      heatmapRef.current.setData(heatmapData);
-      heatmapRef.current.setMap(map);
-    }
+
+      const removeLabel = point.eventType === "kasis" ? "Kasisi Kaldır"
+                        : point.eventType === "çukur" ? "Çukuru Kaldır"
+                        : "Noktayı Kaldır";
+      const removeBtn = isAdmin
+        ? `<br/><button onclick="window.dispatchEvent(new CustomEvent('rqm-remove-pothole',{detail:${point.id}}))" style="margin-top:6px;padding:4px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;">🗑️ ${removeLabel}</button>`
+        : "";
+
+      const isBozuk = point.eventType === "bozuk";
+      const infoWindow = new google.maps.InfoWindow({
+        content: isBozuk
+          ? `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+               <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">⚡ Bozuk Yol</strong><br/>
+               <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span>
+               ${removeBtn}
+             </div>`
+          : `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+               <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">
+                 ${getEventIcon(point.eventType)} ${getEventLabel(point.eventType)}
+               </strong><br/>
+               <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span><br/>
+               <span style="color:#666;">Hız: <b>${point.speed} m/s</b></span><br/>
+               <span style="color:#666;">Şiddet: <b>${point.siddet || '-'}</b></span>
+               ${removeBtn}
+             </div>`,
+      });
+      
+      marker.addListener("click", () => infoWindow.open(map, marker));
+      markersRef.current.push(marker);
+    });
 
     return () => {
-      if (heatmapRef.current) {
-        heatmapRef.current.setMap(null);
-        heatmapRef.current = null;
-      }
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
     };
-  }, [map, visualization, roadData]);
+  }, [map, roadData, isAdmin]);
 
   return null;
 }
 
+
 // ─── Autocomplete Input Sub-component ──────────────────────────────────────────
-function AutocompleteInput({ label, placeholder, onPlaceSelect, showLocationBtn, onUseMyLocation, locationLoading, inputRef: externalRef }) {
+function AutocompleteInput({ label, placeholder, onPlaceSelect, showLocationBtn, onUseMyLocation, locationLoading, inputRef: externalRef, onMapSelect, selectingMapMode }) {
   const internalRef = useRef(null);
   const inputRef = externalRef || internalRef;
   const autocompleteRef = useRef(null);
@@ -128,8 +190,27 @@ function AutocompleteInput({ label, placeholder, onPlaceSelect, showLocationBtn,
   return (
     <div className="autocomplete-field">
       <label>{label}</label>
-      <div className="input-wrapper">
-        <input ref={inputRef} type="text" placeholder={placeholder} />
+      <div className="input-wrapper" style={{ display: "flex", gap: "6px" }}>
+        <input ref={inputRef} type="text" placeholder={placeholder} style={{ flex: 1, minWidth: 0 }} />
+        {onMapSelect && (
+          <button
+            type="button"
+            className="btn-map-select"
+            onClick={onMapSelect}
+            title="Haritadan Seç"
+            style={{
+              padding: "0 10px",
+              background: selectingMapMode ? "var(--primary)" : "transparent",
+              color: selectingMapMode ? "white" : "var(--text-secondary)",
+              border: `1px solid ${selectingMapMode ? "var(--primary)" : "var(--border-color)"}`,
+              borderRadius: "8px",
+              cursor: "pointer",
+              transition: "0.2s"
+            }}
+          >
+            📍
+          </button>
+        )}
       </div>
       {showLocationBtn && (
         <button
@@ -137,6 +218,7 @@ function AutocompleteInput({ label, placeholder, onPlaceSelect, showLocationBtn,
           onClick={onUseMyLocation}
           disabled={locationLoading}
           type="button"
+          style={{ marginTop: "6px" }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3"/>
@@ -147,6 +229,58 @@ function AutocompleteInput({ label, placeholder, onPlaceSelect, showLocationBtn,
       )}
     </div>
   );
+}
+
+// ─── Route Selection Markers Sub-component ────────────────────────────────────
+function RouteSelectionMarkers({ origin, destination }) {
+  const map = useMap();
+  const originMarkerRef = useRef(null);
+  const destMarkerRef = useRef(null);
+
+  useEffect(() => {
+    if (!map) return;
+
+    if (origin?.geometry?.location) {
+      if (!originMarkerRef.current) {
+        originMarkerRef.current = new google.maps.Marker({
+          map,
+          title: "Başlangıç",
+          label: { text: "A", color: "#ffffff", fontSize: "14px", fontWeight: "bold" }
+        });
+      }
+      originMarkerRef.current.setPosition(origin.geometry.location);
+    } else if (originMarkerRef.current) {
+      originMarkerRef.current.setMap(null);
+      originMarkerRef.current = null;
+    }
+
+    if (destination?.geometry?.location) {
+      if (!destMarkerRef.current) {
+        destMarkerRef.current = new google.maps.Marker({
+          map,
+          title: "Varış",
+          label: { text: "B", color: "#ffffff", fontSize: "14px", fontWeight: "bold" }
+        });
+      }
+      destMarkerRef.current.setPosition(destination.geometry.location);
+    } else if (destMarkerRef.current) {
+      destMarkerRef.current.setMap(null);
+      destMarkerRef.current = null;
+    }
+
+    return () => {
+      // Don't clean up on every render, only when unmounting or if map changes
+    };
+  }, [map, origin, destination]);
+
+  useEffect(() => {
+    return () => {
+      if (originMarkerRef.current) originMarkerRef.current.setMap(null);
+      if (destMarkerRef.current) destMarkerRef.current.setMap(null);
+    };
+  }, []);
+
+  return null;
 }
 
 // ─── Directions Sub-component ──────────────────────────────────────────────────
@@ -163,7 +297,7 @@ function DirectionsHandler({ origin, destination, onRouteReady }) {
     if (!rendererRef.current) {
       rendererRef.current = new google.maps.DirectionsRenderer({
         map,
-        suppressMarkers: false,
+        suppressMarkers: true,
         polylineOptions: {
           strokeColor: "#6366f1",
           strokeWeight: 5,
@@ -204,13 +338,12 @@ function DirectionsHandler({ origin, destination, onRouteReady }) {
 }
 
 // ─── Route Warning Markers Sub-component ───────────────────────────────────────
-function RouteWarningMarkers({ routePath, roadData }) {
+function RouteWarningMarkers({ routePath, roadData, isAdmin }) {
   const map = useMap();
   const geometry = useMapsLibrary("geometry");
   const markersRef = useRef([]);
 
   useEffect(() => {
-    // Clean up old markers
     markersRef.current.forEach((m) => m.setMap(null));
     markersRef.current = [];
 
@@ -229,35 +362,63 @@ function RouteWarningMarkers({ routePath, roadData }) {
       );
 
       if (isOnRoute) {
-        const marker = new google.maps.Marker({
-          map,
-          position: latLng,
-          title: `${getScoreLabel(point.vibration_score)} Yol — Skor: ${point.vibration_score}/10`,
-          icon: {
+        let iconConfig;
+        let labelConfig = null;
+
+        if (point.eventType === "kasis") {
+          iconConfig = BUMP_ICON;
+        } else if (point.eventType === "çukur") {
+          iconConfig = POTHOLE_ICON;
+        } else {
+          iconConfig = {
             path: google.maps.SymbolPath.CIRCLE,
             scale: 14,
             fillColor: getScoreColor(point.vibration_score),
             fillOpacity: 1,
             strokeColor: "#ffffff",
             strokeWeight: 2,
-          },
-          label: {
+          };
+          labelConfig = {
             text: `${point.vibration_score}`,
             color: "#ffffff",
             fontWeight: "bold",
             fontSize: "12px",
-          },
+          };
+        }
+
+        const marker = new google.maps.Marker({
+          map,
+          position: latLng,
+          title: `${getScoreLabel(point.vibration_score)} Yol — Skor: ${point.vibration_score}/10`,
+          icon: iconConfig,
+          label: labelConfig,
+          zIndex: point.eventType === "kasis" || point.eventType === "çukur" ? 100 : 10,
         });
 
+        const removeLabel2 = point.eventType === "kasis" ? "Kasisi Kaldır"
+                           : point.eventType === "çukur" ? "Çukuru Kaldır"
+                           : "Noktayı Kaldır";
+        const removeBtn = isAdmin
+          ? `<br/><button onclick="window.dispatchEvent(new CustomEvent('rqm-remove-pothole',{detail:${point.id}}))" style="margin-top:6px;padding:4px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;">🗑️ ${removeLabel2}</button>`
+          : "";
+
+        const isBozuk2 = point.eventType === "bozuk";
         const infoWindow = new google.maps.InfoWindow({
-          content: `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
-            <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">
-              ${getEventIcon(point.eventType)} ${getEventLabel(point.eventType)}
-            </strong><br/>
-            <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span><br/>
-            <span style="color:#666;">Hız: <b>${point.speed} m/s</b></span><br/>
-            <span style="color:#666;">Salınım: <b>${point.peakToPeak}g</b></span>
-          </div>`,
+          content: isBozuk2
+            ? `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+                 <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">⚡ Bozuk Yol</strong><br/>
+                 <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span>
+                 ${removeBtn}
+               </div>`
+            : `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+                 <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">
+                   ${getEventIcon(point.eventType)} ${getEventLabel(point.eventType)}
+                 </strong><br/>
+                 <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span><br/>
+                 <span style="color:#666;">Hız: <b>${point.speed} m/s</b></span><br/>
+                 <span style="color:#666;">Şiddet: <b>${point.siddet || '-'}</b></span>
+                 ${removeBtn}
+               </div>`,
         });
         marker.addListener("click", () => infoWindow.open(map, marker));
 
@@ -269,7 +430,89 @@ function RouteWarningMarkers({ routePath, roadData }) {
       markersRef.current.forEach((m) => m.setMap(null));
       markersRef.current = [];
     };
-  }, [map, geometry, routePath, roadData]);
+  }, [map, geometry, routePath, roadData, isAdmin]);
+
+  return null;
+}
+
+// ─── Speed Bump Markers Sub-component ───────────────────────────────────────────
+function SpeedBumpMarkers({ speedBumps, isAdmin, onRemoveBump }) {
+  const map = useMap();
+  const markersRef = useRef([]);
+
+  useEffect(() => {
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+    if (!map || !speedBumps || speedBumps.length === 0) return;
+
+    speedBumps.forEach((bump) => {
+      const marker = new google.maps.Marker({
+        map,
+        position: { lat: bump.lat, lng: bump.lng },
+        title: `Kasis${bump.note ? " — " + bump.note : ""}`,
+        icon: BUMP_ICON,
+        zIndex: 900,
+      });
+
+      const content = `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+        <strong style="color:#f59e0b;font-size:14px;">🔶 Kasis (Manuel)</strong><br/>
+        <span style="color:#666;">Koordinat: ${bump.lat.toFixed(5)}, ${bump.lng.toFixed(5)}</span><br/>
+        ${bump.note ? `<span>Not: ${bump.note}</span><br/>` : ""}
+        <span style="color:#999;font-size:11px;">Eklenme: ${new Date(bump.addedAt).toLocaleDateString("tr-TR")}</span>
+        ${isAdmin ? `<br/><button onclick="window.dispatchEvent(new CustomEvent('rqm-remove-bump',{detail:'${bump.id}'}))" style="margin-top:6px;padding:4px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;">🗑️ Kasisi Kaldır</button>` : ""}
+      </div>`;
+
+      const infoWindow = new google.maps.InfoWindow({ content });
+      marker.addListener("click", () => infoWindow.open(map, marker));
+      markersRef.current.push(marker);
+    });
+
+    return () => {
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+    };
+  }, [map, speedBumps, isAdmin]);
+
+  return null;
+}
+
+// ─── Added Pothole Markers Sub-component ───────────────────────────────────────
+function AddedPotholeMarkers({ potholes, isAdmin }) {
+  const map = useMap();
+  const markersRef = useRef([]);
+
+  useEffect(() => {
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+    if (!map || !potholes || potholes.length === 0) return;
+
+    potholes.forEach((ph) => {
+      const marker = new google.maps.Marker({
+        map,
+        position: { lat: ph.lat, lng: ph.lng },
+        title: `Çukur (Manuel)${ph.note ? " — " + ph.note : ""}`,
+        icon: POTHOLE_ICON,
+        zIndex: 900,
+      });
+
+      const content = `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+        <strong style="color:#7c3aed;font-size:14px;">🕳️ Çukur (Manuel)</strong><br/>
+        <span style="color:#666;">Koordinat: ${ph.lat.toFixed(5)}, ${ph.lng.toFixed(5)}</span><br/>
+        ${ph.note ? `<span>Not: ${ph.note}</span><br/>` : ""}
+        <span style="color:#999;font-size:11px;">Eklenme: ${new Date(ph.addedAt).toLocaleDateString("tr-TR")}</span>
+        ${isAdmin ? `<br/><button onclick="window.dispatchEvent(new CustomEvent('rqm-remove-added-pothole',{detail:'${ph.id}'}))" style="margin-top:6px;padding:4px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;">🗑️ Çukuru Kaldır</button>` : ""}
+      </div>`;
+
+      const infoWindow = new google.maps.InfoWindow({ content });
+      marker.addListener("click", () => infoWindow.open(map, marker));
+      markersRef.current.push(marker);
+    });
+
+    return () => {
+      markersRef.current.forEach((m) => m.setMap(null));
+      markersRef.current = [];
+    };
+  }, [map, potholes, isAdmin]);
 
   return null;
 }
@@ -368,12 +611,76 @@ export default function MapComponent() {
   const [destination, setDestination] = useState(null);
   const [routeRequested, setRouteRequested] = useState(false);
   const [routePath, setRoutePath] = useState(null);
-  const [warningCount, setWarningCount] = useState(0);
+  const [routeStats, setRouteStats] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [locatingUser, setLocatingUser] = useState(false);
   const [roadData, setRoadData] = useState([]);
   const [dataLoading, setDataLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeFilter, setActiveFilter] = useState(null); // null | "kasis" | "çukur"
+
+  // ── Route selection states ──
+  const [selectingOriginMode, setSelectingOriginMode] = useState(false);
+  const [selectingDestMode, setSelectingDestMode] = useState(false);
+  const destInputRef = useRef(null);
+
+  // ── Admin state ──
+  const { isAdmin, logout } = useAdmin();
+  const [removedIds, setRemovedIds] = useState(() => getRemovedPotholes());
+  const [speedBumps, setSpeedBumps] = useState(() => getAddedSpeedBumps());
+  const [addedPotholes, setAddedPotholes] = useState(() => getAddedPotholes());
+  const [addBumpMode, setAddBumpMode] = useState(false);
+  const [addPotholeMode, setAddPotholeMode] = useState(false);
+  const [reportPointMode, setReportPointMode] = useState(false);
+
+  // Filtrelenmiş veri: silinen çukurlar çıkarılmış
+  const filteredRoadData = useMemo(() => {
+    return roadData.filter((d) => !removedIds.includes(d.id));
+  }, [roadData, removedIds]);
+
+  // Haritada gösterilecek veri: aktif kategori filtresi uygulanmış
+  const displayData = useMemo(() => {
+    if (!activeFilter) return filteredRoadData;
+    return filteredRoadData.filter(d => d.eventType === activeFilter);
+  }, [filteredRoadData, activeFilter]);
+
+  // Admin: Çukur silme
+  const handleRemovePothole = useCallback((id) => {
+    addRemovedPothole(id);
+    setRemovedIds((prev) => prev.includes(id) ? prev : [...prev, id]);
+  }, []);
+
+  // Admin: Kasis ekleme
+  const handleAddBump = useCallback((lat, lng) => {
+    addSpeedBump({ lat, lng, note: "" });
+    setSpeedBumps(getAddedSpeedBumps());
+    setAddBumpMode(false);
+  }, []);
+
+  // Admin: Çukur ekleme
+  const handleAddPothole = useCallback((lat, lng) => {
+    addPothole({ lat, lng, note: "" });
+    setAddedPotholes(getAddedPotholes());
+    setAddPotholeMode(false);
+  }, []);
+
+  // Admin: Kasis kaldırma (event listener)
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail) { removeSpeedBump(e.detail); setSpeedBumps(getAddedSpeedBumps()); }
+    };
+    window.addEventListener("rqm-remove-bump", handler);
+    return () => window.removeEventListener("rqm-remove-bump", handler);
+  }, []);
+
+  // Admin: Manuel eklenen çukur kaldırma (event listener)
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail) { removeAddedPothole(e.detail); setAddedPotholes(getAddedPotholes()); }
+    };
+    window.addEventListener("rqm-remove-added-pothole", handler);
+    return () => window.removeEventListener("rqm-remove-added-pothole", handler);
+  }, []);
 
   // Otomatik olarak kullanıcının konumunu al
   useEffect(() => {
@@ -391,29 +698,117 @@ export default function MapComponent() {
     }
   }, []);
 
+  // Admin: Çukur silme (event listener)
+  useEffect(() => {
+    const handler = (e) => {
+      if (e.detail) handleRemovePothole(e.detail);
+    };
+    window.addEventListener("rqm-remove-pothole", handler);
+    return () => window.removeEventListener("rqm-remove-pothole", handler);
+  }, [handleRemovePothole]);
+
   const handleRouteReady = useCallback(
     (path) => {
       setRoutePath(path);
+    },
+    []
+  );
 
-      // Count how many bad points are on the route
-      if (path && window.google && roadData.length > 0) {
-        const routePoly = new google.maps.Polyline({ path });
-        const count = roadData.filter((p) => {
-          if (p.vibration_score <= 4) return false;
-          const latLng = new google.maps.LatLng(p.lat, p.lng);
-          return google.maps.geometry.poly.isLocationOnEdge(
-            latLng,
-            routePoly,
-            EDGE_TOLERANCE
-          );
-        }).length;
-        setWarningCount(count);
-      } else {
-        setWarningCount(0);
+  // Rota veya veriler değiştiğinde rotadaki istatistikleri hesapla
+  useEffect(() => {
+    if (!routePath || !window.google || filteredRoadData.length === 0) {
+      setRouteStats(null);
+      return;
+    }
+    const routePoly = new google.maps.Polyline({ path: routePath });
+    const onRoute = filteredRoadData.filter((p) => {
+      const latLng = new google.maps.LatLng(p.lat, p.lng);
+      return google.maps.geometry.poly.isLocationOnEdge(latLng, routePoly, EDGE_TOLERANCE);
+    });
+    const kasisCount = onRoute.filter(p => p.eventType === "kasis").length;
+    const cukurCount = onRoute.filter(p => p.eventType === "çukur").length;
+    const bozukCount = onRoute.filter(p => p.eventType === "bozuk").length;
+    const total = onRoute.length;
+
+    let quality, qualityColor;
+    if (total === 0)      { quality = "İyi";    qualityColor = "#22c55e"; }
+    else if (total <= 2)  { quality = "Orta";   qualityColor = "#eab308"; }
+    else if (total <= 5)  { quality = "Kötü";   qualityColor = "#f97316"; }
+    else                  { quality = "Kritik"; qualityColor = "#ef4444"; }
+
+    setRouteStats({ kasisCount, cukurCount, bozukCount, total, quality, qualityColor });
+  }, [routePath, filteredRoadData]);
+
+  // Harita tıklama: kasis ekleme veya rapor nokta seçimi
+  const handleMapClick = useCallback(
+    (e) => {
+      // Çeşitli kütüphane versiyonlarına karşı hem e.detail.latLng hem de e.latLng kontrolü
+      const latLng = e.detail?.latLng || e.latLng;
+      
+      if (!latLng) {
+        console.warn("Haritaya tıklandı ama koordinat bulunamadı!", e);
+        return;
+      }
+      
+      const lat = typeof latLng.lat === 'function' ? latLng.lat() : latLng.lat;
+      const lng = typeof latLng.lng === 'function' ? latLng.lng() : latLng.lng;
+
+      if (selectingOriginMode) {
+        console.log("📍 Başlangıç noktası seçildi:", lat, lng);
+        const fakePlace = {
+          geometry: { location: new google.maps.LatLng(lat, lng) },
+          name: "Haritadan Seçilen Nokta",
+          formatted_address: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        };
+        setOrigin(fakePlace);
+        if (originInputRef.current) originInputRef.current.value = "📍 Haritadan Seçildi";
+        setSelectingOriginMode(false);
+        return;
+      }
+
+      if (selectingDestMode) {
+        console.log("📍 Varış noktası seçildi:", lat, lng);
+        const fakePlace = {
+          geometry: { location: new google.maps.LatLng(lat, lng) },
+          name: "Haritadan Seçilen Nokta",
+          formatted_address: `${lat.toFixed(4)}, ${lng.toFixed(4)}`,
+        };
+        setDestination(fakePlace);
+        if (destInputRef.current) destInputRef.current.value = "📍 Haritadan Seçildi";
+        setSelectingDestMode(false);
+        return;
+      }
+
+      if (addBumpMode) {
+        handleAddBump(lat, lng);
+      } else if (addPotholeMode) {
+        handleAddPothole(lat, lng);
+      } else if (reportPointMode) {
+        console.log("📍 Haritaya tıklandı (Rapor Modu AKTİF)");
+        window.dispatchEvent(
+          new CustomEvent("rqm-report-point-selected", { detail: { lat, lng } })
+        );
+        setReportPointMode(false);
       }
     },
-    [roadData]
+    [addBumpMode, addPotholeMode, reportPointMode, handleAddBump, handleAddPothole, selectingOriginMode, selectingDestMode]
   );
+
+  const handleStartSelectOrigin = () => {
+    setSelectingOriginMode(true);
+    setSelectingDestMode(false);
+    setAddBumpMode(false);
+    setReportPointMode(false);
+    if (window.innerWidth <= 768) setSidebarOpen(false);
+  };
+
+  const handleStartSelectDest = () => {
+    setSelectingDestMode(true);
+    setSelectingOriginMode(false);
+    setAddBumpMode(false);
+    setReportPointMode(false);
+    if (window.innerWidth <= 768) setSidebarOpen(false);
+  };
 
   const handleGetRoute = () => {
     if (origin && destination) {
@@ -425,7 +820,11 @@ export default function MapComponent() {
   const handleClearRoute = () => {
     setRouteRequested(false);
     setRoutePath(null);
-    setWarningCount(0);
+    setRouteStats(null);
+    setOrigin(null);
+    setDestination(null);
+    if (originInputRef.current) originInputRef.current.value = "";
+    if (destInputRef.current) destInputRef.current.value = "";
   };
 
   // Handle using current location as origin
@@ -544,11 +943,16 @@ export default function MapComponent() {
                     onUseMyLocation={handleUseMyLocation}
                     locationLoading={locatingUser}
                     inputRef={originInputRef}
+                    onMapSelect={handleStartSelectOrigin}
+                    selectingMapMode={selectingOriginMode}
                   />
                   <AutocompleteInput
                     label="Varış"
                     placeholder="Nereye..."
                     onPlaceSelect={setDestination}
+                    inputRef={destInputRef}
+                    onMapSelect={handleStartSelectDest}
+                    selectingMapMode={selectingDestMode}
                   />
                 </div>
               </div>
@@ -570,15 +974,37 @@ export default function MapComponent() {
               </div>
             </div>
 
-            {/* Route warnings summary */}
-            {routeRequested && routePath && (
+            {/* Route quality summary */}
+            {routeRequested && routePath && routeStats && (
               <div className="warnings-section">
-                {warningCount > 0 ? (
+                {routeStats.total > 0 ? (
                   <div className="warning-card">
                     <span className="warning-card-icon">⚠️</span>
-                    <div>
-                      <strong>{warningCount} Uyarı Bulundu</strong>
-                      <p>Bu rotada dikkat edilmesi gereken bölgeler var.</p>
+                    <div style={{ width: "100%" }}>
+                      <strong>Rotada {routeStats.total} Sorun</strong>
+                      <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                        {routeStats.kasisCount > 0 && (
+                          <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: "999px", fontSize: "12px", fontWeight: 600 }}>
+                            ⛔ {routeStats.kasisCount} kasis
+                          </span>
+                        )}
+                        {routeStats.cukurCount > 0 && (
+                          <span style={{ background: "#ede9fe", color: "#5b21b6", padding: "2px 8px", borderRadius: "999px", fontSize: "12px", fontWeight: 600 }}>
+                            🕳️ {routeStats.cukurCount} çukur
+                          </span>
+                        )}
+                        {routeStats.bozukCount > 0 && (
+                          <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: "999px", fontSize: "12px", fontWeight: 600 }}>
+                            ⚡ {routeStats.bozukCount} bozuk
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ marginTop: "8px", display: "flex", alignItems: "center", gap: "6px" }}>
+                        <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>Yol Kalitesi:</span>
+                        <span style={{ background: routeStats.qualityColor, color: "#fff", padding: "2px 10px", borderRadius: "999px", fontSize: "12px", fontWeight: 700 }}>
+                          {routeStats.quality}
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -586,7 +1012,8 @@ export default function MapComponent() {
                     <span className="success-card-icon">✅</span>
                     <div>
                       <strong>Güvenli Rota</strong>
-                      <p>Bu rotada kötü yol noktası bulunamadı.</p>
+                      <p>Bu rotada sorun bulunamadı.</p>
+                      <span style={{ background: "#22c55e", color: "#fff", padding: "2px 10px", borderRadius: "999px", fontSize: "12px", fontWeight: 700 }}>İyi</span>
                     </div>
                   </div>
                 )}
@@ -607,16 +1034,27 @@ export default function MapComponent() {
               </div>
               <div className="legend-items">
                 <div className="legend-item">
-                  <span className="legend-dot" style={{ background: "#eab308" }}></span>
-                  Sert (5-6)
+                  <span className="legend-dot" style={{ background: "#f59e0b", borderRadius: "50% 50% 0 0" }}></span>
+                  ⛔ Kasis
                 </div>
                 <div className="legend-item">
-                  <span className="legend-dot" style={{ background: "#f97316" }}></span>
-                  Kötü (7)
+                  <span
+                    className="legend-dot"
+                    style={{
+                      background: "transparent",
+                      width: 0,
+                      height: 0,
+                      borderLeft: "8px solid transparent",
+                      borderRight: "8px solid transparent",
+                      borderTop: "13px solid #7c3aed",
+                      borderRadius: 0,
+                    }}
+                  ></span>
+                  🕳️ Çukur
                 </div>
                 <div className="legend-item">
                   <span className="legend-dot" style={{ background: "#ef4444" }}></span>
-                  Tehlikeli (8-10)
+                  Bozuk Yol (8-10)
                 </div>
               </div>
             </div>
@@ -635,27 +1073,33 @@ export default function MapComponent() {
               </div>
               <div className="stats-grid">
                 <div className="stat-card">
-                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter(d => d.vibration_score >= 5).length}</span>
-                  <span className="stat-label">Sert Olay</span>
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.length}</span>
+                  <span className="stat-label">Toplam Olay</span>
                 </div>
-                <div className="stat-card">
-                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter((d) => d.vibration_score >= 5 && d.eventType === "çukur").length}</span>
+                <div
+                  className={`stat-card stat-card-clickable${activeFilter === "çukur" ? " stat-card-active" : ""}`}
+                  onClick={() => setActiveFilter(prev => prev === "çukur" ? null : "çukur")}
+                  title="Haritada sadece çukurları göster"
+                >
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.filter((d) => d.eventType === "çukur").length}</span>
                   <span className="stat-label">🕳️ Çukur</span>
+                  {activeFilter === "çukur" && <span className="stat-filter-badge">filtre aktif</span>}
                 </div>
-                <div className="stat-card">
-                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter((d) => d.vibration_score >= 5 && d.eventType === "kasis").length}</span>
+                <div
+                  className={`stat-card stat-card-clickable${activeFilter === "kasis" ? " stat-card-active" : ""}`}
+                  onClick={() => setActiveFilter(prev => prev === "kasis" ? null : "kasis")}
+                  title="Haritada sadece kasisleri göster"
+                >
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.filter((d) => d.eventType === "kasis").length}</span>
                   <span className="stat-label">⛔ Kasis</span>
-                </div>
-                <div className="stat-card">
-                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : roadData.filter((d) => d.vibration_score >= 5 && d.eventType === "bozuk").length}</span>
-                  <span className="stat-label">🚧 Bozuk</span>
+                  {activeFilter === "kasis" && <span className="stat-filter-badge">filtre aktif</span>}
                 </div>
                 <div className="stat-card">
                   <span className="stat-value">
                     {dataLoading
                       ? <span className="skeleton" />
-                      : roadData.length > 0
-                      ? (roadData.reduce((s, d) => s + d.vibration_score, 0) / roadData.length).toFixed(1)
+                      : filteredRoadData.length > 0
+                      ? (filteredRoadData.reduce((s, d) => s + d.vibration_score, 0) / filteredRoadData.length).toFixed(1)
                       : "0"}
                   </span>
                   <span className="stat-label">Ort. Skor</span>
@@ -666,27 +1110,28 @@ export default function MapComponent() {
 
           <div className="sidebar-footer">
             <p>Kahramanmaraş Bölgesi — Gerçek Zamanlı Veri</p>
-            <span className="footer-version">v1.0 — Road Quality</span>
+            <span className="footer-version">v2.0 — Road Quality</span>
           </div>
         </div>
       </aside>
 
       {/* ── Map ── */}
-      <div className="map-wrapper">
+      <div className={`map-wrapper ${addBumpMode || addPotholeMode || reportPointMode || selectingOriginMode || selectingDestMode ? "cursor-crosshair" : ""}`}>
         <Map
           defaultCenter={KAHRAMANMARAS_CENTER}
           defaultZoom={DEFAULT_ZOOM}
           gestureHandling="greedy"
           disableDefaultUI={false}
           style={{ width: "100%", height: "100%" }}
+          onClick={handleMapClick}
         >
-          {/* Load road data dynamically from Directions API */}
           <RoadDataLoader onDataReady={(data) => { setRoadData(data); setDataLoading(false); }} />
 
-          {/* Heatmap layer showing all data points */}
-          <HeatmapLayer roadData={roadData} />
+          <DefectMarkers roadData={displayData} isAdmin={isAdmin} />
 
-          {/* Directions rendering (only when route is requested) */}
+          {/* Route Origin/Destination Markers */}
+          <RouteSelectionMarkers origin={origin} destination={destination} />
+
           {routeRequested && origin && destination && (
             <DirectionsHandler
               origin={origin}
@@ -695,15 +1140,109 @@ export default function MapComponent() {
             />
           )}
 
-          {/* Warning markers on route (only for bad roads) */}
-          {routePath && <RouteWarningMarkers routePath={routePath} roadData={roadData} />}
+          {routePath && <RouteWarningMarkers routePath={routePath} roadData={filteredRoadData} isAdmin={isAdmin} />}
 
-          {/* Pan map to user location */}
+          {/* Admin: Speed bump markers */}
+          <SpeedBumpMarkers speedBumps={speedBumps} isAdmin={isAdmin} />
+
+          {/* Admin: Manuel eklenen çukur markers */}
+          <AddedPotholeMarkers potholes={addedPotholes} isAdmin={isAdmin} />
+
           <MapViewController center={userLocation} />
 
-          {/* User location blue dot */}
           {userLocation && <UserLocationMarker position={userLocation} />}
         </Map>
+
+        {/* Admin Panel - Floating on Top Right */}
+        {isAdmin && (
+          <div className="floating-admin-panel">
+            <div className="section-title">
+              <span className="section-icon section-icon-admin">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+              </span>
+              Admin Paneli
+              <span className="admin-badge">🔐</span>
+            </div>
+
+            {/* Kasis Ekleme */}
+            <button
+              className={`btn-admin-action ${addBumpMode ? "active" : ""}`}
+              onClick={() => { setAddBumpMode(b => !b); setAddPotholeMode(false); setReportPointMode(false); }}
+            >
+              <span>🔶</span>
+              {addBumpMode ? "Kasis Ekleme — AKTİF (haritaya tıkla)" : "Kasis Ekle"}
+            </button>
+
+            {/* Çukur Ekleme */}
+            <button
+              className={`btn-admin-action ${addPotholeMode ? "active" : ""}`}
+              onClick={() => { setAddPotholeMode(b => !b); setAddBumpMode(false); setReportPointMode(false); }}
+              style={{ borderColor: "#7c3aed", color: addPotholeMode ? "#fff" : "#7c3aed", background: addPotholeMode ? "#7c3aed" : "transparent" }}
+            >
+              <span>🕳️</span>
+              {addPotholeMode ? "Çukur Ekleme — AKTİF (haritaya tıkla)" : "Çukur Ekle"}
+            </button>
+
+            {(addBumpMode || addPotholeMode) && (
+              <div className="admin-mode-hint" style={{ marginTop: 0, marginBottom: "8px" }}>
+                {addBumpMode ? "Kasis" : "Çukur"} eklemek istediğiniz noktaya tıklayın. Marker'a tıklayarak silebilirsiniz.
+              </div>
+            )}
+
+            {/* Sayaçlar */}
+            {removedIds.length > 0 && (
+              <div className="admin-info-badge">🗑️ {removedIds.length} sensör çukuru gizlendi</div>
+            )}
+            {speedBumps.length > 0 && (
+              <div className="admin-info-badge bump">🔶 {speedBumps.length} kasis eklendi</div>
+            )}
+            {addedPotholes.length > 0 && (
+              <div className="admin-info-badge" style={{ borderColor: "#7c3aed", color: "#7c3aed" }}>🕳️ {addedPotholes.length} çukur eklendi</div>
+            )}
+
+            {/* Rapor Paneli */}
+            <ReportPanel
+              roadData={filteredRoadData}
+              routePath={routePath}
+              onSelectPointMode={() => { setReportPointMode(true); setAddBumpMode(false); }}
+            />
+
+            {/* Çıkış */}
+            <button className="btn-admin-logout" onClick={logout}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              Çıkış Yap
+            </button>
+          </div>
+        )}
+
+        {/* Mode overlay indicator (bottom center) */}
+        {(addBumpMode || addPotholeMode || reportPointMode || selectingOriginMode || selectingDestMode) && (
+          <div className="map-mode-overlay">
+            <span>
+              {addBumpMode && "🔶 Kasis Ekleme Modu — Haritaya tıklayın"}
+              {addPotholeMode && "🕳️ Çukur Ekleme Modu — Haritaya tıklayın"}
+              {reportPointMode && "📍 Rapor Noktası Seçin — Haritaya tıklayın"}
+              {selectingOriginMode && "📍 Başlangıç Noktasını Seçin — Haritaya tıklayın"}
+              {selectingDestMode && "📍 Varış Noktasını Seçin — Haritaya tıklayın"}
+            </span>
+            <button onClick={() => {
+              setAddBumpMode(false);
+              setAddPotholeMode(false);
+              setReportPointMode(false);
+              setSelectingOriginMode(false);
+              setSelectingDestMode(false);
+            }}>
+              İptal
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

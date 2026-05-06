@@ -1,5 +1,8 @@
+import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { APIProvider } from "@vis.gl/react-google-maps";
+import { AdminProvider } from "./context/AdminContext";
 import MapComponent from "./components/MapComponent";
+import AdminLogin from "./components/AdminLogin";
 import "./App.css";
 
 /**
@@ -11,12 +14,19 @@ const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
 function App() {
   return (
-    <APIProvider
-      apiKey={GOOGLE_MAPS_API_KEY}
-      libraries={["visualization", "places", "geometry"]}
-    >
-      <MapComponent />
-    </APIProvider>
+    <BrowserRouter basename="/road-quality-map">
+      <AdminProvider>
+        <APIProvider
+          apiKey={GOOGLE_MAPS_API_KEY}
+          libraries={["visualization", "places", "geometry"]}
+        >
+          <Routes>
+            <Route path="/" element={<MapComponent />} />
+            <Route path="/admin" element={<AdminLogin />} />
+          </Routes>
+        </APIProvider>
+      </AdminProvider>
+    </BrowserRouter>
   );
 }
 

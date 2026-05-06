@@ -1,289 +1,180 @@
-/**
- * Real road quality data parser with physics-based event detection.
- *
- * CSV columns (semicolon-delimited, comma decimal separator):
- *   time; ax; ay; az; wx; wy; wz; Latitude; Longitude; Speed (m/s); Altitude (m)
- *
- * Detection logic:
- *  ┌─────────────────────────────────────────────────────────────────────┐
- *  │  KASİS (Speed Bump):                                              │
- *  │    - Araç yavaşlıyor (hız düşüyor)                                │
- *  │    - Sensör yukarı yönde hareket algılıyor (az pozitif pik)        │
- *  │    - Sürücü kasisi gördü ve yavaşladı                             │
- *  │                                                                    │
- *  │  ÇUKUR (Pothole):                                                  │
- *  │    - Araç pek yavaşlamıyor (hız sabit/yüksek)                     │
- *  │    - Sensör aşağı yönde ani hareket algılıyor (az negatif pik)    │
- *  │    - Sürücü çukuru görmedi, araç çukura düştü                     │
- *  │                                                                    │
- *  │  DÜZ YOL (Smooth Road):                                           │
- *  │    - az ekseni düşük salınım (gürültü seviyesi)                   │
- *  │    - Normal sürüş titreşimi                                       │
- *  └─────────────────────────────────────────────────────────────────────┘
- *
- * Vibration score mapping:
- *   1-3  → İyi   (Good / Green)
- *   4-7  → Orta  (Moderate / Yellow)
- *   8-10 → Kötü  (Bad / Red)
- */
+import csvContent from "../../yol_veri.csv?raw";
 
-import csvContent1 from "../../2026-04-0111.20.40.csv?raw";
-import csvContent2 from "../../2026-03-2916.33.02.csv?raw";
+const ACCEL_LSB_PER_G = 16384;
+const GYRO_LSB_PER_DPS = 131;
+const G = 9.81;
 
-// ─── Parsing Helpers ────────────────────────────────────────────────────────────
+const MIN_SPEED = 1.5;
+const BASELINE_WIN_MS = 1500;
+const EVENT_WIN_MS = 700;
+const BG_WIN_START_MS = 3000;   // bg RMS penceresi başlangıcı (ms öncesi)
+const BG_WIN_END_MS = 800;    // bg RMS penceresi bitişi
 
-/** Parse Turkish-locale number (comma decimal) to JS float. */
-function parseNum(str) {
-  if (!str) return 0;
-  return parseFloat(str.trim().replace(",", "."));
+const KASIS_P2P_MIN = 5.0;
+const KASIS_DECEL_MIN = 1.2;    // normal yavaşlama eşiği
+const KASIS_DECEL_EASY = 0.8;    // yüksek p2p için gevşek eşik
+const KASIS_P2P_HIGH = 7.0;    // gevşek eşik için min p2p
+const KASIS_CONTRAST = 2.8;    // spike / bg_rms — bozuktan ayırt eşiği
+
+const POTHOLE_P2P_MIN = 5.0;
+const ROLL_TRIGGER = 22;
+
+const BOZUK_P2P_MIN = 8.0;
+const YAW_REJECT = 35;
+const DECEL_LOOKBACK = 2000;
+const MERGE_GAP_MS = 2500;
+
+function parseNum(s) { return s ? parseFloat(s.trim().replace(",", ".")) : 0; }
+
+function parseLatLon(s) {
+  if (!s) return 0;
+  const parts = s.trim().split(".");
+  if (parts.length > 2) return parseFloat(parts[0] + "." + parts.slice(1).join(""));
+  return parseFloat(s.replace(",", "."));
 }
 
-// ─── Physics Thresholds (SERT FİLTRE) ───────────────────────────────────────────
-
-/**
- * Gürültü eşiği (noise floor).
- * |az| bu değerin altındaysa, normal yol titreşimi sayılır.
- * Araç motor titreşimi, hafif yol pürüzleri vs. hep gürültüdür.
- */
-const NOISE_THRESHOLD = 2.0; // g — yüksek eşik, küçük sarsıntıları yoksay
-
-/**
- * Olay algılama eşiği.
- * Peak-to-peak (max_az - min_az) bu değerin üstündeyse,
- * bir yol olayı (çukur veya kasis) var demektir.
- * 4.5g altı = normal sürüş titreşimi. (Daha sert filtre)
- */
-const EVENT_THRESHOLD = 4.5; // g — sadece çok belirgin olayları algıla
-
-/**
- * Yavaşlama eşiği.
- * Hız farkı (speed_end - speed_start) bu değerden düşükse,
- * araç yavaşlamış demektir → sürücü bir şey gördü (kasis).
- */
-const DECELERATION_THRESHOLD = -1.0; // m/s — 1 sn içinde 1 m/s yavaşlama frenleme demektir
-
-/**
- * Ciddi olay eşiği.
- * Tek bir az pikinin mutlak değeri bu değeri geçerse,
- * ciddi bir çukur veya kasis var demektir.
- */
-const SEVERE_PEAK_THRESHOLD = 6.0; // g — sadece gerçekten çok sert darbeler
-
-/**
- * Peak-to-peak → Skor haritalama tablosu.
- * Sert filtre: Çoğu nokta skor 1-3 olacak.
- * Sadece gerçek yol hasarları yüksek skor alacak.
- */
-const SCORE_MAP = [
-  [2.0, 1],   // < 2.0g → düz yol, normal titreşim
-  [3.5, 2],   // 2.0-3.5g → hafif pürüz, sorun yok
-  [4.5, 3],   // 3.5-4.5g → hafif sarsıntı, kabul edilebilir (Olay sayılmaz)
-  [6.0, 5],   // 4.5-6.0g → orta düzey çukur/kasis
-  [7.5, 7],   // 6.0-7.5g → ciddi çukur/kasis
-  [9.0, 8],   // 7.5-9.0g → ağır hasar
-  [12.0, 9],  // 9.0-12.0g → tehlikeli
-  [Infinity, 10], // > 12.0g → çok tehlikeli
-];
-
-// ─── Core Algorithm ─────────────────────────────────────────────────────────────
-
-/**
- * Analiz sonucu: her GPS grubu için yol olayı tespiti.
- *
- * @param {Object} group - GPS grubu
- * @param {number[]} group.azValues - Z-ekseni ivmeölçer değerleri
- * @param {number[]} group.speeds  - Hız değerleri
- * @returns {{ score: number, eventType: string, peakToPeak: number, maxPeak: number }}
- */
-function analyzeGroup(group) {
-  const { azValues, speeds } = group;
-
-  if (azValues.length === 0) {
-    return { score: 1, eventType: "düz", peakToPeak: 0, maxPeak: 0 };
+function rollingBaseline(rows, windowMs) {
+  const out = new Array(rows.length).fill(0);
+  let sum = 0, count = 0, l = 0;
+  for (let r = 0; r < rows.length; r++) {
+    sum += rows[r].ax; count++;
+    while (rows[r].t - rows[l].t > windowMs && l < r) { sum -= rows[l].ax; count--; l++; }
+    out[r] = sum / count;
   }
-
-  // ── 1. Peak analizi ───────────────────────────────────────────────
-  let maxAz = -Infinity;  // en yüksek yukarı pik
-  let minAz = Infinity;   // en düşük aşağı pik
-  let maxAzIdx = 0;
-  let minAzIdx = 0;
-
-  for (let i = 0; i < azValues.length; i++) {
-    if (azValues[i] > maxAz) {
-      maxAz = azValues[i];
-      maxAzIdx = i;
-    }
-    if (azValues[i] < minAz) {
-      minAz = azValues[i];
-      minAzIdx = i;
-    }
-  }
-
-  const peakToPeak = maxAz - minAz;                 // toplam salınım genliği
-  const maxPeak = Math.max(Math.abs(maxAz), Math.abs(minAz)); // en büyük mutlak pik
-
-  // ── 2. Skor hesapla (peak-to-peak tabanlı) ──────────────────────
-  let score = 1;
-  for (const [threshold, s] of SCORE_MAP) {
-    if (peakToPeak <= threshold) {
-      score = s;
-      break;
-    }
-  }
-
-  // ── 3. Olay türü tespiti ──────────────────────────────────────────
-
-  // Gürültü seviyesinin altındaysa → düz yol
-  if (peakToPeak < EVENT_THRESHOLD) {
-    return { score, eventType: "düz", peakToPeak, maxPeak };
-  }
-
-  // Hız değişimi analizi: araç yavaşladı mı?
-  let speedDelta = 0;
-  if (speeds.length >= 2) {
-    speedDelta = speeds[speeds.length - 1] - speeds[0];
-  }
-  const isDecelerating = speedDelta < DECELERATION_THRESHOLD;
-
-  // Pik sırası analizi:
-  //   - Negatif pik ÖNCE geldiyse → araç düştü → ÇUKUR
-  //   - Pozitif pik ÖNCE geldiyse → araç yukarı kalktı → KASİS
-  const negativeFirst = minAzIdx < maxAzIdx;
-
-  // Az baskın yön: hangisi daha güçlü?
-  const negativeDominant = Math.abs(minAz) > Math.abs(maxAz);
-
-  let eventType;
-
-  if (negativeDominant && negativeFirst && !isDecelerating) {
-    // Aşağı yönde baskın + ilk hareket aşağı + yavaşlama yok
-    // → Sürücü çukuru görmedi, araç çukura düştü
-    eventType = "çukur";
-  } else if (!negativeDominant && isDecelerating) {
-    // Yukarı yönde baskın + araç yavaşlıyordu
-    // → Sürücü kasisi gördü ve yavaşladı
-    eventType = "kasis";
-  } else if (negativeDominant && negativeFirst && isDecelerating) {
-    // Aşağı yönde ama yavaşladı → kasisi fark etti ama geç kaldı
-    eventType = "kasis";
-  } else if (peakToPeak > SEVERE_PEAK_THRESHOLD * 2) {
-    // Çok büyük salınım, iki yönde de şiddetli → bozuk yol
-    eventType = "bozuk";
-  } else if (!negativeDominant && !negativeFirst) {
-    // İlk hareket yukarı ve yukarı yönlü baskın → yüksek ihtimalle kasis veya tümsek
-    eventType = "kasis";
-  } else {
-    // Geri kalan her türlü şiddetli darbeyi çukur olarak varsay (kasisler daha nadirdir)
-    eventType = "çukur";
-  }
-
-  // ── 4. Ciddi olay bonus skoru ─────────────────────────────────────
-  // Tek bir ani pik çok yüksekse, skor minimum 5 olmalı
-  if (maxPeak >= SEVERE_PEAK_THRESHOLD && score < 5) {
-    score = 5;
-  }
-  // Çok şiddetli ani düşüş (6g+) → minimum 7
-  if (maxPeak >= SEVERE_PEAK_THRESHOLD * 2 && score < 7) {
-    score = 7;
-  }
-
-  return { score, eventType, peakToPeak, maxPeak };
+  return out;
 }
 
-// ─── CSV Parser & Main Export ───────────────────────────────────────────────────
+function idxAt(arr, fromIdx, dtMs) {
+  const target = arr[fromIdx].t + dtMs;
+  if (dtMs > 0) { let i = fromIdx; while (i < arr.length - 1 && arr[i].t < target) i++; return i; }
+  let i = fromIdx; while (i > 0 && arr[i].t > target) i--; return i;
+}
 
-/**
- * Parse the raw CSV content and produce an array of road data points
- * with physics-based vibration scores and event type classification.
- *
- * @returns {Array<{
- *   id: number,
- *   lat: number,
- *   lng: number,
- *   vibration_score: number,
- *   speed: number,
- *   eventType: string,
- *   peakToPeak: number
- * }>}
- */
+function bgRms(samples, i) {
+  const lo = idxAt(samples, i, -BG_WIN_START_MS);
+  const hi = idxAt(samples, i, -BG_WIN_END_MS);
+  if (hi <= lo) return 0;
+  let ss = 0, n = 0;
+  for (let j = lo; j <= hi; j++) { ss += samples[j].vert ** 2; n++; }
+  return Math.sqrt(ss / n);
+}
+
 export function loadRealRoadData() {
-  const lines = [
-    ...csvContent1.split("\n"),
-    ...csvContent2.split("\n")
-  ];
-  const dataLines = [];
+  const lines = csvContent.split("\n");
+  const rows = [];
 
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
     if (!line) continue;
-    if (line.startsWith("time") || line.startsWith("Time")) continue;
-
-    const parts = line.split(";");
-    if (parts.length < 10) continue;
-
-    const time = parseNum(parts[0]);
-    const az = parseNum(parts[3]);  // Z-ekseni ivmeölçer
-    const lat = parseNum(parts[7]);
-    const lng = parseNum(parts[8]);
-    const speed = parseNum(parts[9]);
-
-    // GPS fixi olmayan noktaları atla
-    if (lat === 0 && lng === 0) continue;
-    // Duran araç okumaları anlamlı değil
-    if (speed < 0.5) continue;
-
-    dataLines.push({ time, lat, lng, speed, az });
+    const p = line.split(",");
+    if (p.length < 13) continue;
+    const t = parseNum(p[2]);
+    const ax = parseNum(p[3]), ay = parseNum(p[4]), az = parseNum(p[5]);
+    const wx = parseNum(p[6]), wy = parseNum(p[7]), wz = parseNum(p[8]);
+    const lat = parseLatLon(p[9]), lng = parseLatLon(p[10]);
+    const speed = parseNum(p[11]);
+    if ([t, ax, ay, az, wx, wy, wz].some(Number.isNaN)) continue;
+    rows.push({ t, ax, ay, az, wx, wy, wz, lat, lng, speed });
   }
 
-  // ── GPS koordinatına göre grupla ──────────────────────────────────
-  // Aynı lat+lng = aynı GPS epoch'u (GPS ~1 Hz güncellenir)
-  const groups = [];
-  let currentGroup = null;
+  if (rows.length === 0) return [];
 
-  for (const row of dataLines) {
-    const key = `${row.lat.toFixed(8)}_${row.lng.toFixed(8)}`;
+  const sample = rows.filter(r => r.speed < 0.3).slice(0, 200);
+  const base = sample.length >= 30 ? sample : rows.slice(0, 100);
+  const mean = (arr, k) => arr.reduce((s, r) => s + r[k], 0) / arr.length;
+  const biasWx = mean(base, "wx"), biasWy = mean(base, "wy"), biasWz = mean(base, "wz");
 
-    if (!currentGroup || currentGroup.key !== key) {
-      if (currentGroup) groups.push(currentGroup);
-      currentGroup = {
-        key,
-        lat: row.lat,
-        lng: row.lng,
-        speeds: [row.speed],
-        azValues: [row.az],
-        times: [row.time],
-      };
-    } else {
-      currentGroup.speeds.push(row.speed);
-      currentGroup.azValues.push(row.az);
-      currentGroup.times.push(row.time);
+  const axBaseline = rollingBaseline(rows, BASELINE_WIN_MS);
+
+  const samples = rows.map((r, i) => ({
+    ...r,
+    vert: ((r.ax - axBaseline[i]) / ACCEL_LSB_PER_G) * G,
+    yawRate: Math.abs((r.wx - biasWx) / GYRO_LSB_PER_DPS),
+    rollRate: Math.hypot(r.wy - biasWy, r.wz - biasWz) / GYRO_LSB_PER_DPS,
+  }));
+
+  const events = [];
+
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    if (s.speed < MIN_SPEED) continue;
+    if (!Number.isFinite(s.lat) || s.lat === 0 || s.lng === 0) continue;
+
+    const lo = idxAt(samples, i, -EVENT_WIN_MS / 2);
+    const hi = idxAt(samples, i, EVENT_WIN_MS / 2);
+
+    let vMax = -Infinity, vMin = Infinity, rMax = 0, yMax = 0;
+    let peakCount = 0, prev = 0;
+    for (let j = lo; j <= hi; j++) {
+      const v = samples[j].vert;
+      if (v > vMax) vMax = v;
+      if (v < vMin) vMin = v;
+      if (samples[j].rollRate > rMax) rMax = samples[j].rollRate;
+      if (samples[j].yawRate > yMax) yMax = samples[j].yawRate;
+      if (Math.sign(v) !== Math.sign(prev) && Math.abs(v) > 1.5) peakCount++;
+      prev = v;
     }
+    const p2p = vMax - vMin;
+    if (p2p < 4.5) continue;
+    if (yMax > YAW_REJECT) continue;
+
+    const back = idxAt(samples, i, -DECEL_LOOKBACK);
+    let maxPrev = s.speed;
+    for (let j = back; j < i; j++) if (samples[j].speed > maxPrev) maxPrev = samples[j].speed;
+    const decel = maxPrev - s.speed;
+
+    const noise = bgRms(samples, i);
+    const contrast = p2p / (noise + 0.5);
+
+    const negDom = (-vMin) > vMax * 1.15;
+    const posDom = vMax > (-vMin) * 1.15;
+
+    const decelOk = decel >= KASIS_DECEL_MIN;
+    const decelEasy = decel >= KASIS_DECEL_EASY && p2p >= KASIS_P2P_HIGH;
+    const kasPattern = posDom || peakCount >= 2;
+    const goodContrast = contrast >= KASIS_CONTRAST;
+
+    let eventType = null, score = 0, siddet = "";
+
+    if ((decelOk || decelEasy) && p2p >= KASIS_P2P_MIN && kasPattern && goodContrast) {
+      eventType = "kasis";
+      score = Math.min(10, Math.round(4 + p2p * 0.4 + decel * 1.3));
+      siddet = peakCount >= 2 ? "Sinüsoidal Kasis" : "Rampa Kasis";
+    } else if (rMax > ROLL_TRIGGER && p2p >= POTHOLE_P2P_MIN && yMax < YAW_REJECT * 0.6 && (negDom || !posDom)) {
+      eventType = "çukur";
+      score = Math.min(10, Math.round(4 + p2p * 0.35 + rMax * 0.07));
+      siddet = "Tek tekerlek darbesi";
+    } else if (p2p >= BOZUK_P2P_MIN) {
+      eventType = "bozuk";
+      score = Math.min(10, Math.round(3 + p2p * 0.45));
+      siddet = "Genel sarsıntı";
+    } else continue;
+
+    events.push({ t: s.t, lat: s.lat, lng: s.lng, speed: s.speed, eventType, score, p2p, rMax, decel, siddet });
   }
-  if (currentGroup) groups.push(currentGroup);
 
-  // ── Her grubu analiz et ───────────────────────────────────────────
-  const roadData = groups.map((group, idx) => {
-    const analysis = analyzeGroup(group);
-    const avgSpeed = group.speeds.reduce((a, b) => a + b, 0) / group.speeds.length;
+  const merged = [];
+  for (const ev of events) {
+    const last = merged[merged.length - 1];
+    if (last && (ev.t - last.t) < MERGE_GAP_MS) {
+      if (ev.score > last.score) Object.assign(last, ev);
+    } else merged.push({ ...ev });
+  }
 
-    return {
-      id: idx + 1,
-      lat: group.lat,
-      lng: group.lng,
-      vibration_score: analysis.score,
-      speed: parseFloat(avgSpeed.toFixed(2)),
-      eventType: analysis.eventType,       // "düz", "çukur", "kasis", "bozuk"
-      peakToPeak: parseFloat(analysis.peakToPeak.toFixed(3)),
-    };
-  });
+  const stats = { kasis: 0, çukur: 0, bozuk: 0 };
+  merged.forEach(e => { stats[e.eventType] = (stats[e.eventType] || 0) + 1; });
+  console.log("📊 Yol olayı tespiti:", stats, `(toplam ${merged.length})`);
 
-  // Debug: Olay istatistikleri
-  const stats = { düz: 0, çukur: 0, kasis: 0, bozuk: 0 };
-  roadData.forEach((p) => { stats[p.eventType] = (stats[p.eventType] || 0) + 1; });
-  console.log("📊 Yol olayı istatistikleri:", stats);
-  console.log(`📊 Skor dağılımı — İyi(1-3): ${roadData.filter(p => p.vibration_score <= 3).length}, Orta(4-7): ${roadData.filter(p => p.vibration_score >= 4 && p.vibration_score <= 7).length}, Kötü(8-10): ${roadData.filter(p => p.vibration_score >= 8).length}`);
-
-  return roadData;
+  return merged.map((e, idx) => ({
+    id: idx + 1,
+    lat: e.lat,
+    lng: e.lng,
+    vibration_score: e.score,
+    speed: parseFloat(e.speed.toFixed(2)),
+    eventType: e.eventType,
+    peakToPeak: parseFloat(e.p2p.toFixed(2)),
+    siddet: e.siddet,
+  }));
 }
 
 export default loadRealRoadData;

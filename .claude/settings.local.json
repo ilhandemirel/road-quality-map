@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell *)",
+      "Bash(ls \"C:\\\\Users\\\\lenovo\\\\Desktop\\\\road-quality-map\" -la)",
+      "Bash(ls \"C:\\\\Users\\\\lenovo\\\\Desktop\\\\road-quality-map\\\\src\")",
+      "Bash(node test_algorithm.mjs)",
+      "Bash(npm run *)",
+      "Bash(del \"C:\\\\Users\\\\lenovo\\\\Desktop\\\\road-quality-map\\\\test_algorithm.mjs\")",
+      "Bash(node *)",
+      "Bash(git add *)"
+    ]
+  }
+}
