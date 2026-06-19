@@ -12,9 +12,11 @@ import "./App.css";
  */
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
+const BASENAME = import.meta.env.VITE_BASE_PATH || '/road-quality-map';
+
 function App() {
   return (
-    <BrowserRouter basename="/road-quality-map">
+    <BrowserRouter basename={BASENAME}>
       <AdminProvider>
         <APIProvider
           apiKey={GOOGLE_MAPS_API_KEY}
