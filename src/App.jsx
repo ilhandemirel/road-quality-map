@@ -12,7 +12,7 @@ import "./App.css";
  */
 const GOOGLE_MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
 
-const BASENAME = import.meta.env.VITE_BASE_PATH || '/road-quality-map';
+const BASENAME = '/';
 
 function App() {
   return (
