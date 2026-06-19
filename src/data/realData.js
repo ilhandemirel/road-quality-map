@@ -1,14 +1,14 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore, collection, onSnapshot } from "firebase/firestore";
 
-// Firebase Config ayarların
+// Firebase Config — değerler .env dosyasından okunur
 const firebaseConfig = {
-  apiKey: "AIzaSyC6GT45jW0dmWuz1EqCqkEaQWbFYtBz-KQ",
-  authDomain: "yol22-eb14c.firebaseapp.com",
-  projectId: "yol22-eb14c",
-  storageBucket: "yol22-eb14c.firebasestorage.app",
-  messagingSenderId: "899862452422",
-  appId: "1:899862452422:web:b5e71c00d8b51bd0b6dfc7"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 const app = initializeApp(firebaseConfig);
