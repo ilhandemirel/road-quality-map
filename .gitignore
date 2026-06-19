@@ -24,3 +24,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Excluded files
+yol kalitesi analizi.pdf
+Yol Kalitesi_Analizi_Final_Raporu.md

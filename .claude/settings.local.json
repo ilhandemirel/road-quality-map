@@ -8,7 +8,9 @@
       "Bash(npm run *)",
       "Bash(del \"C:\\\\Users\\\\lenovo\\\\Desktop\\\\road-quality-map\\\\test_algorithm.mjs\")",
       "Bash(node *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }

@@ -30,27 +30,19 @@ const getScoreLabel = (score) => {
 };
 
 const getEventIcon = (eventType) => {
-  switch (eventType) {
-    case "çukur": return "🕳️";
-    case "kasis": return "⛔";
-    default: return "✅";
-  }
+  return "🕳️";
 };
 
 const getEventLabel = (eventType) => {
-  switch (eventType) {
-    case "çukur": return "Çukur";
-    case "kasis": return "Kasis";
-    default: return "Düz Yol";
-  }
+  return "Çukur";
 };
 
 const BUMP_ICON = {
   path: "M -12,0 C -12,-12 12,-12 12,0 Z",
   scale: 1.2,
-  fillColor: "#f59e0b",
+  fillColor: "#3b82f6",
   fillOpacity: 1,
-  strokeColor: "#000000",
+  strokeColor: "#1e3a5f",
   strokeWeight: 2,
 };
 
@@ -76,7 +68,7 @@ function DefectMarkers({ roadData, isAdmin }) {
     if (!map || !roadData || roadData.length === 0) return;
 
     // Tüm tespit edilen olayları göster (yeni algoritma sadece anomalileri döndürüyor)
-    const badPoints = roadData.filter((p) => p.vibration_score >= 4);
+    const badPoints = roadData;
 
     badPoints.forEach((point) => {
       const position = new google.maps.LatLng(point.lat, point.lng);
@@ -87,8 +79,6 @@ function DefectMarkers({ roadData, isAdmin }) {
 
       if (point.eventType === "kasis") {
         iconConfig = BUMP_ICON;
-      } else if (point.eventType === "çukur") {
-        iconConfig = POTHOLE_ICON;
       } else {
         iconConfig = {
           path: google.maps.SymbolPath.CIRCLE,
@@ -97,12 +87,6 @@ function DefectMarkers({ roadData, isAdmin }) {
           fillOpacity: 0.9,
           strokeColor: "#ffffff",
           strokeWeight: 2,
-        };
-        labelConfig = {
-          text: `${point.vibration_score}`,
-          color: "#ffffff",
-          fontWeight: "bold",
-          fontSize: point.vibration_score >= 8 ? "12px" : "10px",
         };
       }
 
@@ -116,31 +100,25 @@ function DefectMarkers({ roadData, isAdmin }) {
       });
 
       const removeLabel = point.eventType === "kasis" ? "Kasisi Kaldır"
-                        : point.eventType === "çukur" ? "Çukuru Kaldır"
-                        : "Noktayı Kaldır";
+        : point.eventType === "çukur" ? "Çukuru Kaldır"
+          : "Noktayı Kaldır";
       const removeBtn = isAdmin
         ? `<br/><button onclick="window.dispatchEvent(new CustomEvent('rqm-remove-pothole',{detail:${point.id}}))" style="margin-top:6px;padding:4px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;">🗑️ ${removeLabel}</button>`
         : "";
 
-      const isBozuk = point.eventType === "bozuk";
       const infoWindow = new google.maps.InfoWindow({
-        content: isBozuk
-          ? `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
-               <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">⚡ Bozuk Yol</strong><br/>
-               <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span>
-               ${removeBtn}
-             </div>`
-          : `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+        content: `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
                <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">
-                 ${getEventIcon(point.eventType)} ${getEventLabel(point.eventType)}
+                 🕳️ Çukur Kümeleri
                </strong><br/>
                <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span><br/>
                <span style="color:#666;">Hız: <b>${point.speed} m/s</b></span><br/>
-               <span style="color:#666;">Şiddet: <b>${point.siddet || '-'}</b></span>
+               <span style="color:#666;">Nokta Sayısı: <b>${point.n_points || 1}</b></span><br/>
+               <span style="color:#666;">Şiddet: <b>${point.siddet || '-'} (${point.severity_score || '-'})</b></span>
                ${removeBtn}
              </div>`,
       });
-      
+
       marker.addListener("click", () => infoWindow.open(map, marker));
       markersRef.current.push(marker);
     });
@@ -221,8 +199,8 @@ function AutocompleteInput({ label, placeholder, onPlaceSelect, showLocationBtn,
           style={{ marginTop: "6px" }}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M12 2v4M12 18v4M2 12h4M18 12h4"/>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
           </svg>
           {locationLoading ? "Konum alınıyor..." : "Konumumu kullan"}
         </button>
@@ -352,7 +330,6 @@ function RouteWarningMarkers({ routePath, roadData, isAdmin }) {
     const routePoly = new google.maps.Polyline({ path: routePath });
 
     roadData.forEach((point) => {
-      if (point.vibration_score <= 4) return;
 
       const latLng = new google.maps.LatLng(point.lat, point.lng);
       const isOnRoute = google.maps.geometry.poly.isLocationOnEdge(
@@ -367,8 +344,6 @@ function RouteWarningMarkers({ routePath, roadData, isAdmin }) {
 
         if (point.eventType === "kasis") {
           iconConfig = BUMP_ICON;
-        } else if (point.eventType === "çukur") {
-          iconConfig = POTHOLE_ICON;
         } else {
           iconConfig = {
             path: google.maps.SymbolPath.CIRCLE,
@@ -377,12 +352,6 @@ function RouteWarningMarkers({ routePath, roadData, isAdmin }) {
             fillOpacity: 1,
             strokeColor: "#ffffff",
             strokeWeight: 2,
-          };
-          labelConfig = {
-            text: `${point.vibration_score}`,
-            color: "#ffffff",
-            fontWeight: "bold",
-            fontSize: "12px",
           };
         }
 
@@ -396,27 +365,21 @@ function RouteWarningMarkers({ routePath, roadData, isAdmin }) {
         });
 
         const removeLabel2 = point.eventType === "kasis" ? "Kasisi Kaldır"
-                           : point.eventType === "çukur" ? "Çukuru Kaldır"
-                           : "Noktayı Kaldır";
+          : point.eventType === "çukur" ? "Çukuru Kaldır"
+            : "Noktayı Kaldır";
         const removeBtn = isAdmin
           ? `<br/><button onclick="window.dispatchEvent(new CustomEvent('rqm-remove-pothole',{detail:${point.id}}))" style="margin-top:6px;padding:4px 10px;background:#ef4444;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:11px;">🗑️ ${removeLabel2}</button>`
           : "";
 
-        const isBozuk2 = point.eventType === "bozuk";
         const infoWindow = new google.maps.InfoWindow({
-          content: isBozuk2
-            ? `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
-                 <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">⚡ Bozuk Yol</strong><br/>
-                 <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span>
-                 ${removeBtn}
-               </div>`
-            : `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
+          content: `<div style="font-family:Inter,sans-serif;padding:8px 12px;line-height:1.6;">
                  <strong style="color:${getScoreColor(point.vibration_score)};font-size:14px;">
-                   ${getEventIcon(point.eventType)} ${getEventLabel(point.eventType)}
+                   🕳️ Çukur Kümeleri
                  </strong><br/>
                  <span>Titreşim Skoru: <b>${point.vibration_score}/10</b></span><br/>
                  <span style="color:#666;">Hız: <b>${point.speed} m/s</b></span><br/>
-                 <span style="color:#666;">Şiddet: <b>${point.siddet || '-'}</b></span>
+                 <span style="color:#666;">Nokta Sayısı: <b>${point.n_points || 1}</b></span><br/>
+                 <span style="color:#666;">Şiddet: <b>${point.siddet || '-'} (${point.severity_score || '-'})</b></span>
                  ${removeBtn}
                </div>`,
         });
@@ -597,9 +560,14 @@ function RoadDataLoader({ onDataReady }) {
     loadedRef.current = true;
 
     console.log("🛣️ Gerçek sensör verileri yükleniyor...");
-    const data = loadRealRoadData();
-    console.log(`✅ ${data.length} yol veri noktası yüklendi (gerçek veri)`);
-    onDataReady(data);
+    const unsubscribe = loadRealRoadData((data) => {
+      onDataReady(data);
+    });
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+      loadedRef.current = false;
+    };
   }, [map, onDataReady]);
 
   return null;
@@ -632,6 +600,12 @@ export default function MapComponent() {
   const [addBumpMode, setAddBumpMode] = useState(false);
   const [addPotholeMode, setAddPotholeMode] = useState(false);
   const [reportPointMode, setReportPointMode] = useState(false);
+  const [adminPanelOpen, setAdminPanelOpen] = useState(true);
+
+  const handleDataReady = useCallback((data) => {
+    setRoadData(data);
+    setDataLoading(false);
+  }, []);
 
   // Filtrelenmiş veri: silinen çukurlar çıkarılmış
   const filteredRoadData = useMemo(() => {
@@ -641,7 +615,11 @@ export default function MapComponent() {
   // Haritada gösterilecek veri: aktif kategori filtresi uygulanmış
   const displayData = useMemo(() => {
     if (!activeFilter) return filteredRoadData;
-    return filteredRoadData.filter(d => d.eventType === activeFilter);
+    if (activeFilter === "kasis") return filteredRoadData.filter(d => d.eventType === "kasis");
+    if (activeFilter === "şiddetli") return filteredRoadData.filter(d => d.eventType !== "kasis" && d.vibration_score > 6);
+    if (activeFilter === "orta") return filteredRoadData.filter(d => d.eventType !== "kasis" && d.vibration_score > 3 && d.vibration_score <= 6);
+    if (activeFilter === "hafif") return filteredRoadData.filter(d => d.eventType !== "kasis" && d.vibration_score <= 3);
+    return filteredRoadData;
   }, [filteredRoadData, activeFilter]);
 
   // Admin: Çukur silme
@@ -725,18 +703,18 @@ export default function MapComponent() {
       const latLng = new google.maps.LatLng(p.lat, p.lng);
       return google.maps.geometry.poly.isLocationOnEdge(latLng, routePoly, EDGE_TOLERANCE);
     });
-    const kasisCount = onRoute.filter(p => p.eventType === "kasis").length;
-    const cukurCount = onRoute.filter(p => p.eventType === "çukur").length;
-    const bozukCount = onRoute.filter(p => p.eventType === "bozuk").length;
+    const hafifCount = onRoute.filter(p => p.vibration_score <= 3).length;
+    const ortaCount = onRoute.filter(p => p.vibration_score > 3 && p.vibration_score <= 6).length;
+    const siddetliCount = onRoute.filter(p => p.vibration_score > 6).length;
     const total = onRoute.length;
 
     let quality, qualityColor;
-    if (total === 0)      { quality = "İyi";    qualityColor = "#22c55e"; }
-    else if (total <= 2)  { quality = "Orta";   qualityColor = "#eab308"; }
-    else if (total <= 5)  { quality = "Kötü";   qualityColor = "#f97316"; }
-    else                  { quality = "Kritik"; qualityColor = "#ef4444"; }
+    if (total === 0) { quality = "İyi"; qualityColor = "#22c55e"; }
+    else if (total <= 2) { quality = "Orta"; qualityColor = "#eab308"; }
+    else if (total <= 5) { quality = "Kötü"; qualityColor = "#f97316"; }
+    else { quality = "Kritik"; qualityColor = "#ef4444"; }
 
-    setRouteStats({ kasisCount, cukurCount, bozukCount, total, quality, qualityColor });
+    setRouteStats({ hafifCount, ortaCount, siddetliCount, total, quality, qualityColor });
   }, [routePath, filteredRoadData]);
 
   // Harita tıklama: kasis ekleme veya rapor nokta seçimi
@@ -744,12 +722,12 @@ export default function MapComponent() {
     (e) => {
       // Çeşitli kütüphane versiyonlarına karşı hem e.detail.latLng hem de e.latLng kontrolü
       const latLng = e.detail?.latLng || e.latLng;
-      
+
       if (!latLng) {
         console.warn("Haritaya tıklandı ama koordinat bulunamadı!", e);
         return;
       }
-      
+
       const lat = typeof latLng.lat === 'function' ? latLng.lat() : latLng.lat;
       const lng = typeof latLng.lng === 'function' ? latLng.lng() : latLng.lng;
 
@@ -872,9 +850,9 @@ export default function MapComponent() {
         title="Menüyü Aç"
       >
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <line x1="3" y1="6" x2="21" y2="6"/>
-          <line x1="3" y1="12" x2="21" y2="12"/>
-          <line x1="3" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="21" y2="6" />
+          <line x1="3" y1="12" x2="21" y2="12" />
+          <line x1="3" y1="18" x2="21" y2="18" />
         </svg>
       </button>
 
@@ -893,8 +871,8 @@ export default function MapComponent() {
           title="Menüyü Kapat"
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"/>
-            <line x1="6" y1="6" x2="18" y2="18"/>
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
 
@@ -903,9 +881,9 @@ export default function MapComponent() {
             <div className="logo">
               <div className="logo-icon-wrap">
                 <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12h2M19 12h2M12 3v2M12 19v2"/>
-                  <circle cx="12" cy="12" r="7"/>
-                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M3 12h2M19 12h2M12 3v2M12 19v2" />
+                  <circle cx="12" cy="12" r="7" />
+                  <circle cx="12" cy="12" r="3" />
                 </svg>
               </div>
               <div>
@@ -921,8 +899,8 @@ export default function MapComponent() {
               <div className="section-title">
                 <span className="section-icon section-icon-route">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10"/>
-                    <polyline points="12 6 12 12 16 14"/>
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
                   </svg>
                 </span>
                 Rota Planla
@@ -964,7 +942,7 @@ export default function MapComponent() {
                   disabled={!origin || !destination}
                 >
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polygon points="3 11 22 2 13 21 11 13 3 11"/>
+                    <polygon points="3 11 22 2 13 21 11 13 3 11" />
                   </svg>
                   Rota Getir
                 </button>
@@ -983,19 +961,19 @@ export default function MapComponent() {
                     <div style={{ width: "100%" }}>
                       <strong>Rotada {routeStats.total} Sorun</strong>
                       <div style={{ marginTop: "6px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
-                        {routeStats.kasisCount > 0 && (
+                        {routeStats.hafifCount > 0 && (
+                          <span style={{ background: "#dcfce7", color: "#166534", padding: "2px 8px", borderRadius: "999px", fontSize: "12px", fontWeight: 600 }}>
+                            🟢 {routeStats.hafifCount} hafif
+                          </span>
+                        )}
+                        {routeStats.ortaCount > 0 && (
                           <span style={{ background: "#fef3c7", color: "#92400e", padding: "2px 8px", borderRadius: "999px", fontSize: "12px", fontWeight: 600 }}>
-                            ⛔ {routeStats.kasisCount} kasis
+                            🟠 {routeStats.ortaCount} orta
                           </span>
                         )}
-                        {routeStats.cukurCount > 0 && (
-                          <span style={{ background: "#ede9fe", color: "#5b21b6", padding: "2px 8px", borderRadius: "999px", fontSize: "12px", fontWeight: 600 }}>
-                            🕳️ {routeStats.cukurCount} çukur
-                          </span>
-                        )}
-                        {routeStats.bozukCount > 0 && (
+                        {routeStats.siddetliCount > 0 && (
                           <span style={{ background: "#fee2e2", color: "#991b1b", padding: "2px 8px", borderRadius: "999px", fontSize: "12px", fontWeight: 600 }}>
-                            ⚡ {routeStats.bozukCount} bozuk
+                            🔴 {routeStats.siddetliCount} şiddetli
                           </span>
                         )}
                       </div>
@@ -1025,36 +1003,25 @@ export default function MapComponent() {
               <div className="section-title">
                 <span className="section-icon section-icon-legend">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-                    <line x1="3" y1="9" x2="21" y2="9"/>
-                    <line x1="9" y1="21" x2="9" y2="9"/>
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                    <line x1="3" y1="9" x2="21" y2="9" />
+                    <line x1="9" y1="21" x2="9" y2="9" />
                   </svg>
                 </span>
                 Gösterge
               </div>
               <div className="legend-items">
                 <div className="legend-item">
-                  <span className="legend-dot" style={{ background: "#f59e0b", borderRadius: "50% 50% 0 0" }}></span>
-                  ⛔ Kasis
+                  <span className="legend-dot" style={{ background: "#22c55e" }}></span>
+                  Hafif Çukur
                 </div>
                 <div className="legend-item">
-                  <span
-                    className="legend-dot"
-                    style={{
-                      background: "transparent",
-                      width: 0,
-                      height: 0,
-                      borderLeft: "8px solid transparent",
-                      borderRight: "8px solid transparent",
-                      borderTop: "13px solid #7c3aed",
-                      borderRadius: 0,
-                    }}
-                  ></span>
-                  🕳️ Çukur
+                  <span className="legend-dot" style={{ background: "#eab308" }}></span>
+                  Orta Çukur
                 </div>
                 <div className="legend-item">
                   <span className="legend-dot" style={{ background: "#ef4444" }}></span>
-                  Bozuk Yol (8-10)
+                  Şiddetli Çukur
                 </div>
               </div>
             </div>
@@ -1064,43 +1031,61 @@ export default function MapComponent() {
               <div className="section-title">
                 <span className="section-icon section-icon-stats">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="18" y1="20" x2="18" y2="10"/>
-                    <line x1="12" y1="20" x2="12" y2="4"/>
-                    <line x1="6" y1="20" x2="6" y2="14"/>
+                    <line x1="18" y1="20" x2="18" y2="10" />
+                    <line x1="12" y1="20" x2="12" y2="4" />
+                    <line x1="6" y1="20" x2="6" y2="14" />
                   </svg>
                 </span>
                 Veri Özeti
               </div>
               <div className="stats-grid">
                 <div className="stat-card">
-                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.length}</span>
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : displayData.length}</span>
                   <span className="stat-label">Toplam Olay</span>
                 </div>
                 <div
-                  className={`stat-card stat-card-clickable${activeFilter === "çukur" ? " stat-card-active" : ""}`}
-                  onClick={() => setActiveFilter(prev => prev === "çukur" ? null : "çukur")}
-                  title="Haritada sadece çukurları göster"
+                  className={`stat-card stat-card-clickable${activeFilter === "şiddetli" ? " stat-card-active" : ""}`}
+                  onClick={() => setActiveFilter(prev => prev === "şiddetli" ? null : "şiddetli")}
+                  title="Sadece şiddetli çukurları göster"
                 >
-                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.filter((d) => d.eventType === "çukur").length}</span>
-                  <span className="stat-label">🕳️ Çukur</span>
-                  {activeFilter === "çukur" && <span className="stat-filter-badge">filtre aktif</span>}
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.filter((d) => d.vibration_score > 6).length}</span>
+                  <span className="stat-label">🔴 Şiddetli</span>
+                  {activeFilter === "şiddetli" && <span className="stat-filter-badge">filtre aktif</span>}
+                </div>
+                <div
+                  className={`stat-card stat-card-clickable${activeFilter === "orta" ? " stat-card-active" : ""}`}
+                  onClick={() => setActiveFilter(prev => prev === "orta" ? null : "orta")}
+                  title="Sadece orta çukurları göster"
+                >
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.filter((d) => d.vibration_score > 3 && d.vibration_score <= 6).length}</span>
+                  <span className="stat-label">🟠 Orta</span>
+                  {activeFilter === "orta" && <span className="stat-filter-badge">filtre aktif</span>}
+                </div>
+                <div
+                  className={`stat-card stat-card-clickable${activeFilter === "hafif" ? " stat-card-active" : ""}`}
+                  onClick={() => setActiveFilter(prev => prev === "hafif" ? null : "hafif")}
+                  title="Sadece hafif çukurları göster"
+                >
+                  <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.filter((d) => d.vibration_score <= 3).length}</span>
+                  <span className="stat-label">🟢 Hafif</span>
+                  {activeFilter === "hafif" && <span className="stat-filter-badge">filtre aktif</span>}
                 </div>
                 <div
                   className={`stat-card stat-card-clickable${activeFilter === "kasis" ? " stat-card-active" : ""}`}
                   onClick={() => setActiveFilter(prev => prev === "kasis" ? null : "kasis")}
-                  title="Haritada sadece kasisleri göster"
+                  title="Sadece kasisleri göster"
                 >
                   <span className="stat-value">{dataLoading ? <span className="skeleton" /> : filteredRoadData.filter((d) => d.eventType === "kasis").length}</span>
-                  <span className="stat-label">⛔ Kasis</span>
+                  <span className="stat-label">🔵 Kasis</span>
                   {activeFilter === "kasis" && <span className="stat-filter-badge">filtre aktif</span>}
                 </div>
                 <div className="stat-card">
                   <span className="stat-value">
                     {dataLoading
                       ? <span className="skeleton" />
-                      : filteredRoadData.length > 0
-                      ? (filteredRoadData.reduce((s, d) => s + d.vibration_score, 0) / filteredRoadData.length).toFixed(1)
-                      : "0"}
+                      : displayData.length > 0
+                        ? (displayData.reduce((s, d) => s + d.vibration_score, 0) / displayData.length).toFixed(1)
+                        : "0"}
                   </span>
                   <span className="stat-label">Ort. Skor</span>
                 </div>
@@ -1125,7 +1110,7 @@ export default function MapComponent() {
           style={{ width: "100%", height: "100%" }}
           onClick={handleMapClick}
         >
-          <RoadDataLoader onDataReady={(data) => { setRoadData(data); setDataLoading(false); }} />
+          <RoadDataLoader onDataReady={handleDataReady} />
 
           <DefectMarkers roadData={displayData} isAdmin={isAdmin} />
 
@@ -1154,17 +1139,36 @@ export default function MapComponent() {
         </Map>
 
         {/* Admin Panel - Floating on Top Right */}
-        {isAdmin && (
+        {isAdmin && !adminPanelOpen && (
+          <button
+            className="btn-admin-action"
+            style={{ position: 'absolute', top: '20px', right: '65px', zIndex: 1000, background: 'var(--surface)', padding: '10px 15px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)', fontWeight: 600, width: 'auto', display: 'flex', alignItems: 'center', gap: '8px' }}
+            onClick={() => setAdminPanelOpen(true)}
+          >
+            <span style={{ fontSize: '16px' }}>🔐</span> Admin Panelini Aç
+          </button>
+        )}
+
+        {isAdmin && adminPanelOpen && (
           <div className="floating-admin-panel">
-            <div className="section-title">
-              <span className="section-icon section-icon-admin">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
-                  <circle cx="12" cy="10" r="3" />
-                </svg>
-              </span>
-              Admin Paneli
-              <span className="admin-badge">🔐</span>
+            <div className="section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span className="section-icon section-icon-admin">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 22s-8-4.5-8-11.8A8 8 0 0 1 12 2a8 8 0 0 1 8 8.2c0 7.3-8 11.8-8 11.8z" />
+                    <circle cx="12" cy="10" r="3" />
+                  </svg>
+                </span>
+                Admin Paneli
+                <span className="admin-badge">🔐</span>
+              </div>
+              <button
+                onClick={() => setAdminPanelOpen(false)}
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '18px', color: 'var(--text-secondary)', padding: '0 4px' }}
+                title="Paneli Kapat"
+              >
+                ✕
+              </button>
             </div>
 
             {/* Kasis Ekleme */}
